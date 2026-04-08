@@ -1,5 +1,5 @@
 pkgname=vhelper
-pkgver=0.1.0
+pkgver=0.1.1
 pkgrel=1
 pkgdesc='Make vtubing suck less on Linux'
 arch=('any')
