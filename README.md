@@ -1,17 +1,17 @@
 <p align="center">
   <img
     src="data/icons/hicolor/scalable/apps/com.vhelper.app.svg"
-    alt="VHelper logo"
+    alt="vhelper logo"
     width="160"
   />
 </p>
 
-<h1 align="center">VHelper</h1>
+<h1 align="center">vhelper</h1>
 
 <h3 align="center">Make vtubing suck less on Linux.</h3>
 
 <p align="center">
-<img alt="GitHub License" src="https://img.shields.io/github/license/rikkichy/VHelper?style=for-the-badge&labelColor=2D3142&color=B0D7FF">
+<img alt="GitHub License" src="https://img.shields.io/github/license/rikkichy/vhelper?style=for-the-badge&labelColor=2D3142&color=B0D7FF">
 </p>
 
 ---
@@ -25,13 +25,13 @@
 ## Build
 
 > [!NOTE]
-> This part is intended for developers who want to build VHelper from source.
+> This part is intended for developers who want to build vhelper from source.
 
 ```bash
-git clone https://github.com/rikkichy/VHelper.git
+git clone https://github.com/rikkichy/vhelper.git
 ```
 ```bash
-cd VHelper
+cd vhelper
 ```
 ```bash
 makepkg -si
