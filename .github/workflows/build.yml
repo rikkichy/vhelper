@@ -1,0 +1,87 @@
+name: Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: "Version bump type"
+        required: true
+        default: "patch"
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+
+jobs:
+  publish:
+    name: Build
+    runs-on: ubuntu-latest
+    container: archlinux:base-devel
+
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+
+    steps:
+      - name: Install dependencies
+        run: pacman -Syu --noconfirm git python python-gobject gtk4 libadwaita protontricks
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Bump version
+        run: |
+          OLD_VER=$(grep -oP 'pkgver=\K.*' PKGBUILD)
+
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$OLD_VER"
+          case "${{ inputs.bump }}" in
+            major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
+            minor) MINOR=$((MINOR + 1)); PATCH=0 ;;
+            patch) PATCH=$((PATCH + 1)) ;;
+          esac
+          NEW_VER="${MAJOR}.${MINOR}.${PATCH}"
+
+          sed -i "s/pkgver=$OLD_VER/pkgver=$NEW_VER/" PKGBUILD
+          sed -i "s/pkgrel=.*/pkgrel=1/" PKGBUILD
+
+          echo "NEW_VERSION=$NEW_VER" >> "$GITHUB_ENV"
+          echo "Bumped $OLD_VER → $NEW_VER"
+
+      - name: Build package
+        run: |
+          useradd -m builder
+          chown -R builder:builder .
+          su builder -c "makepkg -f"
+
+      - name: Attest package provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: "*.pkg.tar.zst"
+
+      - name: Collect package
+        run: |
+          mkdir -p dist
+          cp *.pkg.tar.zst "dist/vlauncher-${{ env.NEW_VERSION }}-1-any.pkg.tar.zst"
+
+      - name: Commit version bump
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add PKGBUILD
+          git commit -m "Bump version to v${{ env.NEW_VERSION }}"
+          git push
+
+      - name: Create draft release and upload package
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: v${{ env.NEW_VERSION }}
+        run: |
+          BODY="### Changes
+          + No changes."
+
+          gh release view "$TAG" >/dev/null 2>&1 || \
+            gh release create "$TAG" --draft --title "$TAG" --notes "$BODY"
+
+          gh release upload "$TAG" dist/* --clobber

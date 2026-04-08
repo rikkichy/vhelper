@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=VLauncher
+Comment=Make vtubing suck less on Linux
+Exec=vlauncher
+Icon=com.vlauncher.app
+Terminal=false
+Type=Application
+Categories=Game;Utility;
+Keywords=vtuber;shoost;spout;vtube;proton;pipewire;
+StartupWMClass=com.vlauncher.app
