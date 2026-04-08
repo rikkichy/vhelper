@@ -3,21 +3,21 @@ DESTDIR ?=
 
 BINDIR = $(DESTDIR)$(PREFIX)/bin
 DATADIR = $(DESTDIR)$(PREFIX)/share
-APPDIR = $(DATADIR)/vlauncher
+APPDIR = $(DATADIR)/vhelper
 DESKTOPDIR = $(DATADIR)/applications
 ICONDIR = $(DATADIR)/icons/hicolor/scalable/apps
 
 .PHONY: install uninstall
 
 install:
-	install -Dm755 data/vlauncher $(BINDIR)/vlauncher
-	install -Dm644 vlauncher.py $(APPDIR)/vlauncher.py
-	install -Dm644 data/com.vlauncher.app.desktop $(DESKTOPDIR)/com.vlauncher.app.desktop
-	install -Dm644 data/icons/hicolor/scalable/apps/com.vlauncher.app.svg $(ICONDIR)/com.vlauncher.app.svg
+	install -Dm755 data/vhelper $(BINDIR)/vhelper
+	install -Dm644 vhelper.py $(APPDIR)/vhelper.py
+	install -Dm644 data/com.vhelper.app.desktop $(DESKTOPDIR)/com.vhelper.app.desktop
+	install -Dm644 data/icons/hicolor/scalable/apps/com.vhelper.app.svg $(ICONDIR)/com.vhelper.app.svg
 
 uninstall:
-	rm -f $(BINDIR)/vlauncher
-	rm -f $(APPDIR)/vlauncher.py
+	rm -f $(BINDIR)/vhelper
+	rm -f $(APPDIR)/vhelper.py
 	rmdir --ignore-fail-on-non-empty $(APPDIR)
-	rm -f $(DESKTOPDIR)/com.vlauncher.app.desktop
-	rm -f $(ICONDIR)/com.vlauncher.app.svg
+	rm -f $(DESKTOPDIR)/com.vhelper.app.desktop
+	rm -f $(ICONDIR)/com.vhelper.app.svg

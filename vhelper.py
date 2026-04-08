@@ -21,7 +21,7 @@ VTS_COMPAT = STEAM_ROOT / "steamapps/compatdata" / VTS_APPID
 VTS_PREFIX = VTS_COMPAT / "pfx"
 SHOOST_DIR = VTS_PREFIX / "drive_c/Shoost"
 SPOUT2PW_DIR = Path.home() / ".local/share/spout2pw"
-CONFIG_FILE = Path.home() / ".config/vlauncher.json"
+CONFIG_FILE = Path.home() / ".config/vhelper.json"
 
 
 def detect_proton_from_config():
@@ -72,9 +72,9 @@ def save_config(cfg):
     CONFIG_FILE.write_text(json.dumps(cfg, indent=2))
 
 
-class VLauncherWindow(Adw.ApplicationWindow):
+class VHelperWindow(Adw.ApplicationWindow):
     def __init__(self, app):
-        super().__init__(application=app, title="VLauncher", default_width=520, default_height=580)
+        super().__init__(application=app, title="VHelper", default_width=520, default_height=580)
 
         self.proton_path = detect_proton_from_config()
         self.shoost_proc = None
@@ -645,22 +645,22 @@ class VLauncherWindow(Adw.ApplicationWindow):
         self._update_buttons()
 
 
-class VLauncherApp(Adw.Application):
+class VHelperApp(Adw.Application):
     def __init__(self):
         super().__init__(
-            application_id="com.vlauncher.app",
+            application_id="com.vhelper.app",
             flags=Gio.ApplicationFlags.FLAGS_NONE,
         )
 
     def do_activate(self):
         win = self.get_active_window()
         if not win:
-            win = VLauncherWindow(self)
+            win = VHelperWindow(self)
         win.present()
 
 
 def main():
-    app = VLauncherApp()
+    app = VHelperApp()
     app.run()
 
 

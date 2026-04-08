@@ -108,7 +108,7 @@ jobs:
           git config --global user.email "${{ secrets.AUR_EMAIL }}"
           git config --global --add safe.directory '*'
 
-          git clone ssh://aur@aur.archlinux.org/vlauncher.git aur-repo
+          git clone ssh://aur@aur.archlinux.org/vhelper.git aur-repo
           cp PKGBUILD aur-repo/PKGBUILD
 
           useradd -m builder
