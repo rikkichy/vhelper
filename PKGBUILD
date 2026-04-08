@@ -1,5 +1,5 @@
 pkgname=vlauncher
-pkgver=0.1.4
+pkgver=0.1.5
 pkgrel=1
 pkgdesc='Make vtubing suck less on Linux'
 arch=('any')
