@@ -22,24 +22,22 @@ on:
           - "no"
 
 jobs:
-  publish:
-    name: Build
+  release:
+    name: Release
     runs-on: ubuntu-latest
-    container: archlinux:base-devel
 
     permissions:
       contents: write
-      id-token: write
-      attestations: write
+
+    outputs:
+      version: ${{ steps.bump.outputs.version }}
 
     steps:
-      - name: Install dependencies
-        run: pacman -Syu --noconfirm git python python-gobject gtk4 libadwaita protontricks
-
       - name: Checkout
         uses: actions/checkout@v4
 
       - name: Bump version
+        id: bump
         run: |
           OLD_VER=$(grep -oP 'pkgver=\K.*' PKGBUILD)
 
@@ -54,48 +52,45 @@ jobs:
           sed -i "s/pkgver=$OLD_VER/pkgver=$NEW_VER/" PKGBUILD
           sed -i "s/pkgrel=.*/pkgrel=1/" PKGBUILD
 
-          echo "NEW_VERSION=$NEW_VER" >> "$GITHUB_ENV"
+          echo "version=$NEW_VER" >> "$GITHUB_OUTPUT"
           echo "Bumped $OLD_VER → $NEW_VER"
 
-      - name: Build package
-        run: |
-          useradd -m builder
-          chown -R builder:builder .
-          su builder -c "makepkg -f"
-
-      - name: Attest package provenance
-        uses: actions/attest-build-provenance@v2
-        with:
-          subject-path: "*.pkg.tar.zst"
-
-      - name: Collect package
-        run: |
-          mkdir -p dist
-          cp *.pkg.tar.zst "dist/vlauncher-${{ env.NEW_VERSION }}-1-any.pkg.tar.zst"
-
-      - name: Commit version bump
+      - name: Commit and tag
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add PKGBUILD
-          git commit -m "Bump version to v${{ env.NEW_VERSION }}"
-          git push
+          git commit -m "Bump version to v${{ steps.bump.outputs.version }}"
+          git tag "v${{ steps.bump.outputs.version }}"
+          git push --follow-tags
 
-      - name: Create draft release and upload package
+      - name: Create draft release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: v${{ env.NEW_VERSION }}
+          TAG: v${{ steps.bump.outputs.version }}
         run: |
           BODY="### Changes
           + No changes."
 
-          gh release view "$TAG" >/dev/null 2>&1 || \
-            gh release create "$TAG" --draft --title "$TAG" --notes "$BODY"
+          gh release create "$TAG" --draft --title "$TAG" --notes "$BODY"
 
-          gh release upload "$TAG" dist/* --clobber
+  aur:
+    name: Publish to AUR
+    needs: release
+    if: inputs.aur == 'yes'
+    runs-on: ubuntu-latest
+    container: archlinux:base-devel
+
+    steps:
+      - name: Install dependencies
+        run: pacman -Syu --noconfirm git openssh
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: v${{ needs.release.outputs.version }}
 
       - name: Publish to AUR
-        if: inputs.aur == 'yes'
         uses: KSXGitHub/github-actions-deploy-aur@v3.0.1
         with:
           pkgname: vlauncher
@@ -103,5 +98,5 @@ jobs:
           commit_username: ${{ secrets.AUR_USERNAME }}
           commit_email: ${{ secrets.AUR_EMAIL }}
           ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
-          commit_message: "Update to v${{ env.NEW_VERSION }}"
+          commit_message: "Update to v${{ needs.release.outputs.version }}"
           update_pkgver: true
