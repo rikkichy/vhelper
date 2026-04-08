@@ -86,17 +86,40 @@ jobs:
       - name: Install dependencies
         run: pacman -Syu --noconfirm git openssh
 
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.AUR_SSH_PRIVATE_KEY }}" > ~/.ssh/aur
+          chmod 600 ~/.ssh/aur
+          ssh-keyscan aur.archlinux.org >> ~/.ssh/known_hosts
+          cat > ~/.ssh/config << EOF
+          Host aur.archlinux.org
+            IdentityFile ~/.ssh/aur
+            User aur
+          EOF
+          chmod 600 ~/.ssh/config
+
       - name: Checkout
         uses: actions/checkout@v4
         with:
           ref: v${{ needs.release.outputs.version }}
 
-      - name: Publish to AUR
-        uses: KSXGitHub/github-actions-deploy-aur@v4.1.1
-        with:
-          pkgname: vlauncher
-          pkgbuild: PKGBUILD
-          commit_username: ${{ secrets.AUR_USERNAME }}
-          commit_email: ${{ secrets.AUR_EMAIL }}
-          ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
-          commit_message: "Update to v${{ needs.release.outputs.version }}"
+      - name: Push to AUR
+        env:
+          VERSION: ${{ needs.release.outputs.version }}
+        run: |
+          git config --global user.name "${{ secrets.AUR_USERNAME }}"
+          git config --global user.email "${{ secrets.AUR_EMAIL }}"
+          git config --global --add safe.directory '*'
+
+          git clone ssh://aur@aur.archlinux.org/vlauncher.git aur-repo
+          cp PKGBUILD aur-repo/PKGBUILD
+
+          useradd -m builder
+          chown -R builder:builder aur-repo
+          cd aur-repo
+          su builder -c "makepkg --printsrcinfo" > .SRCINFO
+
+          git add PKGBUILD .SRCINFO
+          git commit -m "Update to v${VERSION}"
+          git push
