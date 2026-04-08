@@ -12,6 +12,14 @@ on:
           - patch
           - minor
           - major
+      aur:
+        description: "Publish to AUR?"
+        required: true
+        default: "yes"
+        type: choice
+        options:
+          - "yes"
+          - "no"
 
 jobs:
   publish:
@@ -85,3 +93,15 @@ jobs:
             gh release create "$TAG" --draft --title "$TAG" --notes "$BODY"
 
           gh release upload "$TAG" dist/* --clobber
+
+      - name: Publish to AUR
+        if: inputs.aur == 'yes'
+        uses: KSXGitHub/github-actions-deploy-aur@v3.0.1
+        with:
+          pkgname: vlauncher
+          pkgbuild: PKGBUILD
+          commit_username: ${{ secrets.AUR_USERNAME }}
+          commit_email: ${{ secrets.AUR_EMAIL }}
+          ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+          commit_message: "Update to v${{ env.NEW_VERSION }}"
+          update_pkgver: true
