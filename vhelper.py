@@ -44,7 +44,8 @@ def find_shoost_exe():
     return None
 
 
-def find_spout2pw():
+def find_spout2pw_override():
+    """Find a user-installed (override) spout2pw. None if not present."""
     cfg = load_config()
     custom = cfg.get("spout2pw_path")
     if custom:
@@ -56,6 +57,17 @@ def find_spout2pw():
     if default.exists():
         return default
 
+    return None
+
+
+def find_spout2pw():
+    """Resolve spout2pw.sh: user override first, then the vendored bundle."""
+    override = find_spout2pw_override()
+    if override:
+        return override
+    bundle = find_bundled_spout2pw()
+    if bundle:
+        return bundle / "spout2pw.sh"
     return None
 
 
@@ -99,6 +111,7 @@ class VHelperWindow(Adw.ApplicationWindow):
         self.shoost_proc = None
         self.shoost_exe = find_shoost_exe()
         self.spout2pw_sh = find_spout2pw()
+        self.spout2pw_override_sh = find_spout2pw_override()
         self.cfg = load_config()
         self.use_ntsync = self.cfg.get("ntsync", False)
         self.install_prefix = detect_vhelper_install()
@@ -220,17 +233,13 @@ class VHelperWindow(Adw.ApplicationWindow):
         )
 
         install_s2p_row = Adw.ActionRow(
-            title="Install spout2pw",
-            subtitle="Use the bundled binaries or pick a local tarball",
+            title="Override spout2pw",
+            subtitle="Replace the bundled version with a local tarball",
         )
-        self.install_bundled_btn = Gtk.Button(label="Install bundled", valign=Gtk.Align.CENTER)
-        self.install_bundled_btn.add_css_class("suggested-action")
-        self.install_bundled_btn.connect("clicked", self.on_install_bundled_spout2pw)
-        install_s2p_row.add_suffix(self.install_bundled_btn)
         self.install_s2p_btn = Gtk.Button(label="Install from file", valign=Gtk.Align.CENTER)
         self.install_s2p_btn.connect("clicked", self.on_install_spout2pw)
         install_s2p_row.add_suffix(self.install_s2p_btn)
-        install_s2p_row.set_activatable_widget(self.install_bundled_btn)
+        install_s2p_row.set_activatable_widget(self.install_s2p_btn)
         spout2pw_group.add(install_s2p_row)
 
         vts_opts_row = Adw.ActionRow(
@@ -250,10 +259,10 @@ class VHelperWindow(Adw.ApplicationWindow):
         spout2pw_group.add(vts_opts_row)
 
         uninstall_s2p_row = Adw.ActionRow(
-            title="Uninstall spout2pw",
-            subtitle=str(SPOUT2PW_DIR),
+            title="Remove override",
+            subtitle=f"Delete {SPOUT2PW_DIR} and fall back to the bundle",
         )
-        self.uninstall_s2p_btn = Gtk.Button(label="Uninstall", valign=Gtk.Align.CENTER)
+        self.uninstall_s2p_btn = Gtk.Button(label="Remove", valign=Gtk.Align.CENTER)
         self.uninstall_s2p_btn.add_css_class("destructive-action")
         self.uninstall_s2p_btn.connect("clicked", self.on_uninstall_spout2pw)
         uninstall_s2p_row.add_suffix(self.uninstall_s2p_btn)
@@ -326,10 +335,13 @@ class VHelperWindow(Adw.ApplicationWindow):
 
     def _update_spout2pw_status(self):
         if self.spout2pw_sh:
-            self._set_row_status(self.spout2pw_row, str(self.spout2pw_sh.parent), True)
+            label = str(self.spout2pw_sh.parent)
+            if not self.spout2pw_override_sh:
+                label += " (bundled)"
+            self._set_row_status(self.spout2pw_row, label, True)
         else:
             self._set_row_status(self.spout2pw_row, "Not installed", False)
-        if hasattr(self, "install_bundled_btn"):
+        if hasattr(self, "install_s2p_btn"):
             self._update_s2p_btn_labels()
 
     def _update_buttons(self):
@@ -337,11 +349,8 @@ class VHelperWindow(Adw.ApplicationWindow):
         self.launch_btn.set_sensitive(installed and self.shoost_proc is None)
         self.stop_btn.set_sensitive(self.shoost_proc is not None)
         self.uninstall_btn.set_sensitive(installed and self.shoost_proc is None)
-        self.install_bundled_btn.set_sensitive(
-            self.bundled_spout2pw is not None and self.spout2pw_sh is None
-        )
-        self.install_s2p_btn.set_sensitive(self.spout2pw_sh is None)
-        self.uninstall_s2p_btn.set_sensitive(self.spout2pw_sh is not None)
+        self.install_s2p_btn.set_sensitive(self.spout2pw_override_sh is None)
+        self.uninstall_s2p_btn.set_sensitive(self.spout2pw_override_sh is not None)
 
     def _get_vts_launch_opts(self):
         ntsync = "PROTON_USE_NTSYNC=1 " if self.use_ntsync else ""
@@ -527,36 +536,10 @@ class VHelperWindow(Adw.ApplicationWindow):
         self._update_shoost_status()
         self._update_buttons()
 
-    def on_install_bundled_spout2pw(self, _btn):
-        if not self.bundled_spout2pw:
-            self._log("ERROR: No bundled spout2pw found")
-            return
-        self._log(f"Installing bundled spout2pw from {self.bundled_spout2pw}")
-        try:
-            if SPOUT2PW_DIR.exists():
-                shutil.rmtree(SPOUT2PW_DIR)
-            shutil.copytree(self.bundled_spout2pw, SPOUT2PW_DIR)
-            self.spout2pw_sh = SPOUT2PW_DIR / "spout2pw.sh"
-            self.spout2pw_sh.chmod(self.spout2pw_sh.stat().st_mode | 0o111)
-            self._log(f"Installed spout2pw to {SPOUT2PW_DIR}")
-            self._log(f"Set VTS launch options to: {self._get_vts_launch_opts()}")
-        except Exception as e:
-            self._log(f"ERROR: {e}")
-        self._update_spout2pw_status()
-        self._update_buttons()
-
     def _update_s2p_btn_labels(self):
-        if self.spout2pw_sh:
-            self.install_bundled_btn.set_label("Installed")
-            self.install_bundled_btn.set_visible(True)
-            self.install_s2p_btn.set_visible(False)
-        elif self.bundled_spout2pw:
-            self.install_bundled_btn.set_label("Install bundled")
-            self.install_bundled_btn.set_visible(True)
-            self.install_s2p_btn.set_visible(True)
-        else:
-            self.install_bundled_btn.set_visible(False)
-            self.install_s2p_btn.set_visible(True)
+        self.install_s2p_btn.set_label(
+            "Override active" if self.spout2pw_override_sh else "Install from file"
+        )
 
     def _extract_spout2pw_tar(self, tar_path):
         try:
@@ -596,8 +579,9 @@ class VHelperWindow(Adw.ApplicationWindow):
                         if member.mode & 0o111:
                             dest.chmod(dest.stat().st_mode | 0o111)
 
-                self.spout2pw_sh = SPOUT2PW_DIR / "spout2pw.sh"
-                self._log(f"Installed spout2pw to {SPOUT2PW_DIR}")
+                self.spout2pw_override_sh = SPOUT2PW_DIR / "spout2pw.sh"
+                self.spout2pw_sh = self.spout2pw_override_sh
+                self._log(f"Installed override to {SPOUT2PW_DIR}")
                 self._log(f"Set VTS launch options to: {self._get_vts_launch_opts()}")
 
         except Exception as e:
@@ -652,11 +636,12 @@ class VHelperWindow(Adw.ApplicationWindow):
 
         try:
             shutil.rmtree(SPOUT2PW_DIR)
-            self.spout2pw_sh = None
             self._log(f"Removed {SPOUT2PW_DIR}")
         except Exception as e:
             self._log(f"ERROR: {e}")
 
+        self.spout2pw_override_sh = find_spout2pw_override()
+        self.spout2pw_sh = find_spout2pw()
         self._update_spout2pw_status()
         self._update_buttons()
 
