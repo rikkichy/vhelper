@@ -1,4 +1,4 @@
-PREFIX ?= /usr
+PREFIX ?= /usr/local
 DESTDIR ?=
 
 BINDIR = $(DESTDIR)$(PREFIX)/bin
