@@ -158,9 +158,21 @@ class VHelperWindow(Adw.ApplicationWindow):
         settings_btn.connect("clicked", self.on_open_settings)
         header.pack_end(settings_btn)
 
-        content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
-        content.append(header)
+        self._main_view = self._build_main_view()
 
+        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        outer.append(header)
+        self._body_slot = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0, vexpand=True)
+        outer.append(self._body_slot)
+        self.set_content(outer)
+
+        self._apply_view()
+        self._update_buttons()
+
+    def _build_main_view(self):
+        """Construct the normal vhelper body. Always built — even when the
+        onboarding view is showing — so handlers and self.log_buf/self.*_row
+        exist regardless of which view is currently in the body slot."""
         scrollable = Gtk.ScrolledWindow(vexpand=True)
         clamp = Adw.Clamp(maximum_size=600)
         inner = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
@@ -175,19 +187,11 @@ class VHelperWindow(Adw.ApplicationWindow):
         status_group = Adw.PreferencesGroup(title="Status")
 
         self.vts_row = Adw.ActionRow(title="VTube Studio Prefix")
-        self.vts_row.set_subtitle(str(VTS_PREFIX) if VTS_PREFIX.exists() else "Not found")
-        self.vts_row.add_suffix(Gtk.Image.new_from_icon_name(
-            "emblem-ok-symbolic" if VTS_PREFIX.exists() else "dialog-error-symbolic"
-        ))
+        self._update_vts_status()
         status_group.add(self.vts_row)
 
         self.proton_row = Adw.ActionRow(title="Proton Runtime")
-        proton_name = self.proton_path.name if self.proton_path else "Not detected"
-        proton_ok = self.proton_path and (self.proton_path / "files/bin/wine64").exists()
-        self.proton_row.set_subtitle(proton_name)
-        self.proton_row.add_suffix(Gtk.Image.new_from_icon_name(
-            "emblem-ok-symbolic" if proton_ok else "dialog-error-symbolic"
-        ))
+        self._update_proton_status()
         status_group.add(self.proton_row)
 
         self.shoost_row = Adw.ActionRow(title="Shoost")
@@ -321,8 +325,52 @@ class VHelperWindow(Adw.ApplicationWindow):
         log_group.add(frame)
         inner.append(log_group)
 
-        self.set_content(content)
-        self._update_buttons()
+        return scrollable
+
+    def _onboarding_step(self):
+        """Return (icon, title, description) for the first failing onboarding
+        check, or None when the user can proceed to the main view. Add future
+        checks by extending this method — order = display order."""
+        if not VTS_PREFIX.exists():
+            return (
+                "dialog-warning-symbolic",
+                "VTS Prefix not found",
+                "Go to Steam → Library → VTube Studio → Right-click → "
+                "Properties → Compatibility → set Proton Experimental (or any "
+                "fork ≥ 10.0). Click Retry after that.",
+            )
+        return None
+
+    def _build_onboarding_view(self, step):
+        icon, title, desc = step
+        page = Adw.StatusPage(icon_name=icon, title=title, description=desc)
+        retry_btn = Gtk.Button(label="Retry", halign=Gtk.Align.CENTER)
+        retry_btn.add_css_class("suggested-action")
+        retry_btn.add_css_class("pill")
+        retry_btn.connect("clicked", self._on_retry_onboarding)
+        page.set_child(retry_btn)
+        return page
+
+    def _apply_view(self):
+        """Swap the body between onboarding and the main view based on the
+        current onboarding state. Re-runnable; callers don't track which view
+        is currently shown."""
+        child = self._body_slot.get_first_child()
+        while child:
+            nxt = child.get_next_sibling()
+            self._body_slot.remove(child)
+            child = nxt
+        step = self._onboarding_step()
+        if step:
+            view = self._build_onboarding_view(step)
+        else:
+            self._update_vts_status()
+            self._update_proton_status()
+            view = self._main_view
+        self._body_slot.append(view)
+
+    def _on_retry_onboarding(self, _btn):
+        self._apply_view()
 
     def _log(self, msg):
         end = self.log_buf.get_end_iter()
@@ -340,6 +388,18 @@ class VHelperWindow(Adw.ApplicationWindow):
         )
         row.add_suffix(icon)
         row._status_icon = icon
+
+    def _update_vts_status(self):
+        if VTS_PREFIX.exists():
+            self._set_row_status(self.vts_row, str(VTS_PREFIX), True)
+        else:
+            self._set_row_status(self.vts_row, "Not found", False)
+
+    def _update_proton_status(self):
+        self.proton_path = detect_proton_from_config()
+        name = self.proton_path.name if self.proton_path else "Not detected"
+        ok = bool(self.proton_path and (self.proton_path / "files/bin/wine64").exists())
+        self._set_row_status(self.proton_row, name, ok)
 
     def _update_shoost_status(self):
         if self.shoost_exe:
