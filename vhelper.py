@@ -44,31 +44,24 @@ def find_shoost_exe():
     return None
 
 
-def find_spout2pw_override():
-    """Find a user-installed (override) spout2pw. None if not present."""
-    cfg = load_config()
-    custom = cfg.get("spout2pw_path")
-    if custom:
-        p = Path(custom)
-        if p.exists():
-            return p
-
-    default = SPOUT2PW_DIR / "spout2pw.sh"
-    if default.exists():
-        return default
-
-    return None
-
-
 def find_spout2pw():
-    """Resolve spout2pw.sh: user override first, then the vendored bundle."""
-    override = find_spout2pw_override()
-    if override:
-        return override
+    """Return the runtime spout2pw.sh path. Steam pressure-vessel only mounts
+    $HOME and a handful of other paths into the Proton sandbox, so this must
+    live under the user's home, not /usr/local/share."""
+    p = SPOUT2PW_DIR / "spout2pw.sh"
+    return p if p.exists() else None
+
+
+def extract_bundle_to_home():
+    """Copy the vendored bundle into SPOUT2PW_DIR. Returns True on success."""
     bundle = find_bundled_spout2pw()
-    if bundle:
-        return bundle / "spout2pw.sh"
-    return None
+    if not bundle:
+        return False
+    if SPOUT2PW_DIR.exists():
+        shutil.rmtree(SPOUT2PW_DIR)
+    shutil.copytree(bundle, SPOUT2PW_DIR)
+    (SPOUT2PW_DIR / "spout2pw.sh").chmod(0o755)
+    return True
 
 
 def detect_vhelper_install():
@@ -105,10 +98,16 @@ class VHelperWindow(Adw.ApplicationWindow):
         self.proton_path = detect_proton_from_config()
         self.shoost_proc = None
         self.shoost_exe = find_shoost_exe()
-        self.spout2pw_sh = find_spout2pw()
-        self.spout2pw_override_sh = find_spout2pw_override()
         self.install_prefix = detect_vhelper_install()
         self.bundled_spout2pw = find_bundled_spout2pw()
+
+        if not find_spout2pw() and self.bundled_spout2pw:
+            try:
+                extract_bundle_to_home()
+            except Exception:
+                pass
+
+        self.spout2pw_sh = find_spout2pw()
 
         header = Adw.HeaderBar()
         settings_btn = Gtk.Button(icon_name="emblem-system-symbolic")
@@ -274,10 +273,7 @@ class VHelperWindow(Adw.ApplicationWindow):
 
     def _update_spout2pw_status(self):
         if self.spout2pw_sh:
-            label = str(self.spout2pw_sh.parent)
-            if not self.spout2pw_override_sh:
-                label += " (bundled)"
-            self._set_row_status(self.spout2pw_row, label, True)
+            self._set_row_status(self.spout2pw_row, str(self.spout2pw_sh.parent), True)
         else:
             self._set_row_status(self.spout2pw_row, "Not installed", False)
 
@@ -289,12 +285,9 @@ class VHelperWindow(Adw.ApplicationWindow):
         self._refresh_settings_dialog()
 
     def _refresh_settings_dialog(self):
-        btn = getattr(self, "_settings_override_btn", None)
+        btn = getattr(self, "_settings_reset_btn", None)
         if btn:
-            btn.set_sensitive(self.spout2pw_override_sh is None)
-        btn = getattr(self, "_settings_remove_btn", None)
-        if btn:
-            btn.set_sensitive(self.spout2pw_override_sh is not None)
+            btn.set_sensitive(self.bundled_spout2pw is not None)
 
     def _get_vts_launch_opts(self):
         if self.spout2pw_sh:
@@ -511,9 +504,8 @@ class VHelperWindow(Adw.ApplicationWindow):
                         if member.mode & 0o111:
                             dest.chmod(dest.stat().st_mode | 0o111)
 
-                self.spout2pw_override_sh = SPOUT2PW_DIR / "spout2pw.sh"
-                self.spout2pw_sh = self.spout2pw_override_sh
-                self._log(f"Installed override to {SPOUT2PW_DIR}")
+                self.spout2pw_sh = SPOUT2PW_DIR / "spout2pw.sh"
+                self._log(f"Installed spout2pw to {SPOUT2PW_DIR}")
                 self._log(f"Set VTS launch options to: {self._get_vts_launch_opts()}")
 
         except Exception as e:
@@ -561,18 +553,16 @@ class VHelperWindow(Adw.ApplicationWindow):
         self.get_clipboard().set(opts)
         self._log(f"Copied: {opts}")
 
-    def on_uninstall_spout2pw(self, _btn):
-        if not SPOUT2PW_DIR.exists():
-            self._log("Nothing to uninstall")
+    def on_reset_spout2pw(self, _btn):
+        if not self.bundled_spout2pw:
+            self._log("ERROR: No bundled spout2pw available")
             return
-
         try:
-            shutil.rmtree(SPOUT2PW_DIR)
-            self._log(f"Removed {SPOUT2PW_DIR}")
+            extract_bundle_to_home()
+            self._log(f"Reset spout2pw to bundle at {SPOUT2PW_DIR}")
         except Exception as e:
             self._log(f"ERROR: {e}")
 
-        self.spout2pw_override_sh = find_spout2pw_override()
         self.spout2pw_sh = find_spout2pw()
         self._update_spout2pw_status()
         self._update_buttons()
@@ -614,30 +604,34 @@ class VHelperWindow(Adw.ApplicationWindow):
         dialog.add(page)
 
         s2p_group = Adw.PreferencesGroup(
-            title="spout2pw override",
-            description="The bundled spout2pw is used by default. An override replaces it from a local tarball.",
+            title="spout2pw",
+            description=(
+                "Installed at "
+                f"{SPOUT2PW_DIR}. Steam pressure-vessel only mounts $HOME "
+                "into the Proton sandbox, so it must live here."
+            ),
         )
 
-        override_row = Adw.ActionRow(
-            title="Install override from file",
-            subtitle=f"Extract a tarball to {SPOUT2PW_DIR}",
+        install_row = Adw.ActionRow(
+            title="Install from file",
+            subtitle="Replace with a local .tar.gz",
         )
-        self._settings_override_btn = Gtk.Button(label="Install from file", valign=Gtk.Align.CENTER)
-        self._settings_override_btn.connect("clicked", self.on_install_spout2pw)
-        override_row.add_suffix(self._settings_override_btn)
-        override_row.set_activatable_widget(self._settings_override_btn)
-        s2p_group.add(override_row)
+        install_btn = Gtk.Button(label="Install", valign=Gtk.Align.CENTER)
+        install_btn.connect("clicked", self.on_install_spout2pw)
+        install_row.add_suffix(install_btn)
+        install_row.set_activatable_widget(install_btn)
+        s2p_group.add(install_row)
 
-        remove_row = Adw.ActionRow(
-            title="Remove override",
-            subtitle="Fall back to the bundled spout2pw",
+        reset_row = Adw.ActionRow(
+            title="Reset to bundle",
+            subtitle="Restore the vendored spout2pw shipped with vhelper",
         )
-        self._settings_remove_btn = Gtk.Button(label="Remove", valign=Gtk.Align.CENTER)
-        self._settings_remove_btn.add_css_class("destructive-action")
-        self._settings_remove_btn.connect("clicked", self.on_uninstall_spout2pw)
-        remove_row.add_suffix(self._settings_remove_btn)
-        remove_row.set_activatable_widget(self._settings_remove_btn)
-        s2p_group.add(remove_row)
+        self._settings_reset_btn = Gtk.Button(label="Reset", valign=Gtk.Align.CENTER)
+        self._settings_reset_btn.add_css_class("destructive-action")
+        self._settings_reset_btn.connect("clicked", self.on_reset_spout2pw)
+        reset_row.add_suffix(self._settings_reset_btn)
+        reset_row.set_activatable_widget(self._settings_reset_btn)
+        s2p_group.add(reset_row)
 
         page.add(s2p_group)
 
@@ -663,8 +657,7 @@ class VHelperWindow(Adw.ApplicationWindow):
         dialog.present(self)
 
     def _on_settings_closed(self, _dialog):
-        self._settings_override_btn = None
-        self._settings_remove_btn = None
+        self._settings_reset_btn = None
 
     def _on_uninstall_vhelper_response(self, _dialog, response, existing):
         if response != "uninstall":
