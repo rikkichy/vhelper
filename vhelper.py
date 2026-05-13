@@ -61,6 +61,18 @@ def find_spout2pw():
     return None
 
 
+def detect_vhelper_install():
+    """Return install prefix Path if vhelper was launched from an install
+    (e.g. /usr/local), or None when running from a source checkout."""
+    py = Path(__file__).resolve()
+    if py.parent.name != "vhelper" or py.parent.parent.name != "share":
+        return None
+    prefix = py.parent.parent.parent
+    if not (prefix / "bin/vhelper").exists():
+        return None
+    return prefix
+
+
 def load_config():
     if CONFIG_FILE.exists():
         return json.loads(CONFIG_FILE.read_text())
@@ -82,6 +94,7 @@ class VHelperWindow(Adw.ApplicationWindow):
         self.spout2pw_sh = find_spout2pw()
         self.cfg = load_config()
         self.use_ntsync = self.cfg.get("ntsync", False)
+        self.install_prefix = detect_vhelper_install()
 
         header = Adw.HeaderBar()
 
@@ -240,6 +253,23 @@ class VHelperWindow(Adw.ApplicationWindow):
         spout2pw_group.add(uninstall_s2p_row)
 
         inner.append(spout2pw_group)
+
+        if self.install_prefix:
+            vh_group = Adw.PreferencesGroup(
+                title="vhelper",
+                description=f"Installed at {self.install_prefix}",
+            )
+            uninstall_vh_row = Adw.ActionRow(
+                title="Uninstall vhelper",
+                subtitle="Removes the app. Shoost and spout2pw stay installed.",
+            )
+            self.uninstall_vh_btn = Gtk.Button(label="Uninstall", valign=Gtk.Align.CENTER)
+            self.uninstall_vh_btn.add_css_class("destructive-action")
+            self.uninstall_vh_btn.connect("clicked", self.on_uninstall_vhelper)
+            uninstall_vh_row.add_suffix(self.uninstall_vh_btn)
+            uninstall_vh_row.set_activatable_widget(self.uninstall_vh_btn)
+            vh_group.add(uninstall_vh_row)
+            inner.append(vh_group)
 
         log_group = Adw.PreferencesGroup(title="Log")
         self.log_view = Gtk.TextView(editable=False, monospace=True)
@@ -643,6 +673,66 @@ class VHelperWindow(Adw.ApplicationWindow):
 
         self._update_spout2pw_status()
         self._update_buttons()
+
+    def _vhelper_install_paths(self):
+        p = self.install_prefix
+        return [
+            p / "bin/vhelper",
+            p / "share/vhelper",
+            p / "share/applications/com.vhelper.app.desktop",
+            p / "share/icons/hicolor/scalable/apps/com.vhelper.app.svg",
+        ]
+
+    def on_uninstall_vhelper(self, _btn):
+        existing = [p for p in self._vhelper_install_paths() if p.exists()]
+        if not existing:
+            self._log("Nothing to uninstall")
+            return
+        files_list = "\n".join(f"  • {p}" for p in existing)
+        dialog = Adw.MessageDialog(
+            transient_for=self,
+            heading="Uninstall vhelper?",
+            body=(
+                f"This will remove:\n\n{files_list}\n\n"
+                "Shoost and spout2pw installations are not affected."
+            ),
+        )
+        dialog.add_response("cancel", "Cancel")
+        dialog.add_response("uninstall", "Uninstall")
+        dialog.set_response_appearance("uninstall", Adw.ResponseAppearance.DESTRUCTIVE)
+        dialog.set_default_response("cancel")
+        dialog.connect("response", self._on_uninstall_vhelper_response, existing)
+        dialog.present()
+
+    def _on_uninstall_vhelper_response(self, _dialog, response, existing):
+        if response != "uninstall":
+            return
+
+        needs_root = not os.access(self.install_prefix, os.W_OK)
+        self._log("Uninstalling vhelper...")
+
+        try:
+            if needs_root:
+                if not shutil.which("pkexec"):
+                    self._log("ERROR: pkexec not available; cannot remove root-owned files")
+                    return
+                result = subprocess.run(
+                    ["pkexec", "rm", "-rf", *[str(p) for p in existing]],
+                    capture_output=True, text=True,
+                )
+                if result.returncode != 0:
+                    self._log(f"ERROR: {(result.stderr or result.stdout).strip()}")
+                    return
+            else:
+                for p in existing:
+                    if p.is_dir():
+                        shutil.rmtree(p)
+                    else:
+                        p.unlink()
+            self._log("Removed. Quitting...")
+            GLib.timeout_add(800, lambda: (self.get_application().quit(), False)[1])
+        except Exception as e:
+            self._log(f"ERROR: {e}")
 
 
 class VHelperApp(Adw.Application):
