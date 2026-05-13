@@ -16,6 +16,14 @@
 
 ---
 
+## Quick Install
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/rikkichy/vhelper/main/install.sh | sh
+```
+
+Works on Arch, Debian/Ubuntu, Fedora, openSUSE, and Void.
+
 ## Features
 
 - **Shoost** — Install, launch, and manage Shoost inside VTube Studio's Proton container for proper Spout2 texture sharing
