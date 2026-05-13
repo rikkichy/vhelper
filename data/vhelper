@@ -1,2 +1,8 @@
-#!/bin/bash
-exec python3 /usr/share/vhelper/vhelper.py "$@"
+#!/bin/sh
+for d in /usr/local/share/vhelper /usr/share/vhelper "${XDG_DATA_HOME:-$HOME/.local/share}/vhelper"; do
+    if [ -f "$d/vhelper.py" ]; then
+        exec python3 "$d/vhelper.py" "$@"
+    fi
+done
+echo "vhelper: vhelper.py not found in /usr/local/share, /usr/share, or XDG_DATA_HOME" >&2
+exit 1
