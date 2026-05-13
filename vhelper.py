@@ -182,7 +182,6 @@ class VHelperWindow(Adw.ApplicationWindow):
         inner.set_margin_end(12)
         clamp.set_child(inner)
         scrollable.set_child(clamp)
-        content.append(scrollable)
 
         status_group = Adw.PreferencesGroup(title="Status")
 
