@@ -6,8 +6,6 @@ import os
 import shutil
 import subprocess
 import tarfile
-import threading
-import urllib.request
 import zipfile
 from pathlib import Path
 
@@ -73,6 +71,15 @@ def detect_vhelper_install():
     return prefix
 
 
+def find_bundled_spout2pw():
+    """Return the directory containing the vendored spout2pw files, or None."""
+    py = Path(__file__).resolve()
+    for cand in (py.parent / "spout2pw-bundle", py.parent / "data/spout2pw"):
+        if (cand / "spout2pw.sh").exists():
+            return cand
+    return None
+
+
 def load_config():
     if CONFIG_FILE.exists():
         return json.loads(CONFIG_FILE.read_text())
@@ -95,6 +102,7 @@ class VHelperWindow(Adw.ApplicationWindow):
         self.cfg = load_config()
         self.use_ntsync = self.cfg.get("ntsync", False)
         self.install_prefix = detect_vhelper_install()
+        self.bundled_spout2pw = find_bundled_spout2pw()
 
         header = Adw.HeaderBar()
 
@@ -213,16 +221,16 @@ class VHelperWindow(Adw.ApplicationWindow):
 
         install_s2p_row = Adw.ActionRow(
             title="Install spout2pw",
-            subtitle="Download latest release or pick a local tarball",
+            subtitle="Use the bundled binaries or pick a local tarball",
         )
-        self.download_s2p_btn = Gtk.Button(label="Download", valign=Gtk.Align.CENTER)
-        self.download_s2p_btn.add_css_class("suggested-action")
-        self.download_s2p_btn.connect("clicked", self.on_download_spout2pw)
-        install_s2p_row.add_suffix(self.download_s2p_btn)
+        self.install_bundled_btn = Gtk.Button(label="Install bundled", valign=Gtk.Align.CENTER)
+        self.install_bundled_btn.add_css_class("suggested-action")
+        self.install_bundled_btn.connect("clicked", self.on_install_bundled_spout2pw)
+        install_s2p_row.add_suffix(self.install_bundled_btn)
         self.install_s2p_btn = Gtk.Button(label="Install from file", valign=Gtk.Align.CENTER)
         self.install_s2p_btn.connect("clicked", self.on_install_spout2pw)
         install_s2p_row.add_suffix(self.install_s2p_btn)
-        install_s2p_row.set_activatable_widget(self.download_s2p_btn)
+        install_s2p_row.set_activatable_widget(self.install_bundled_btn)
         spout2pw_group.add(install_s2p_row)
 
         vts_opts_row = Adw.ActionRow(
@@ -321,7 +329,7 @@ class VHelperWindow(Adw.ApplicationWindow):
             self._set_row_status(self.spout2pw_row, str(self.spout2pw_sh.parent), True)
         else:
             self._set_row_status(self.spout2pw_row, "Not installed", False)
-        if hasattr(self, "download_s2p_btn"):
+        if hasattr(self, "install_bundled_btn"):
             self._update_s2p_btn_labels()
 
     def _update_buttons(self):
@@ -329,7 +337,9 @@ class VHelperWindow(Adw.ApplicationWindow):
         self.launch_btn.set_sensitive(installed and self.shoost_proc is None)
         self.stop_btn.set_sensitive(self.shoost_proc is not None)
         self.uninstall_btn.set_sensitive(installed and self.shoost_proc is None)
-        self.download_s2p_btn.set_sensitive(self.spout2pw_sh is None)
+        self.install_bundled_btn.set_sensitive(
+            self.bundled_spout2pw is not None and self.spout2pw_sh is None
+        )
         self.install_s2p_btn.set_sensitive(self.spout2pw_sh is None)
         self.uninstall_s2p_btn.set_sensitive(self.spout2pw_sh is not None)
 
@@ -517,59 +527,35 @@ class VHelperWindow(Adw.ApplicationWindow):
         self._update_shoost_status()
         self._update_buttons()
 
-    def on_download_spout2pw(self, _btn):
-        self.download_s2p_btn.set_sensitive(False)
-        self.download_s2p_btn.set_label("Downloading...")
-        self._log("Fetching latest spout2pw release...")
-
-        def _download():
-            try:
-                req = urllib.request.Request(
-                    "https://api.github.com/repos/hoshinolina/spout2pw/releases/latest",
-                    headers={"Accept": "application/vnd.github+json"},
-                )
-                with urllib.request.urlopen(req, timeout=30) as resp:
-                    data = json.loads(resp.read())
-
-                tag = data["tag_name"]
-                asset = None
-                for a in data["assets"]:
-                    if a["name"].endswith("-bin.tar.gz"):
-                        asset = a
-                        break
-
-                if not asset:
-                    GLib.idle_add(self._log, f"ERROR: No -bin.tar.gz asset in release {tag}")
-                    return
-
-                GLib.idle_add(self._log, f"Downloading {asset['name']} ({tag})...")
-
-                url = asset["browser_download_url"]
-                tmp_path = Path(f"/tmp/{asset['name']}")
-                urllib.request.urlretrieve(url, tmp_path)
-
-                GLib.idle_add(self._log, "Extracting...")
-                GLib.idle_add(self._extract_spout2pw_tar, tmp_path)
-
-            except Exception as e:
-                GLib.idle_add(self._log, f"ERROR: {e}")
-            finally:
-                GLib.idle_add(self._download_s2p_done)
-
-        threading.Thread(target=_download, daemon=True).start()
-
-    def _download_s2p_done(self):
-        self._update_s2p_btn_labels()
+    def on_install_bundled_spout2pw(self, _btn):
+        if not self.bundled_spout2pw:
+            self._log("ERROR: No bundled spout2pw found")
+            return
+        self._log(f"Installing bundled spout2pw from {self.bundled_spout2pw}")
+        try:
+            if SPOUT2PW_DIR.exists():
+                shutil.rmtree(SPOUT2PW_DIR)
+            shutil.copytree(self.bundled_spout2pw, SPOUT2PW_DIR)
+            self.spout2pw_sh = SPOUT2PW_DIR / "spout2pw.sh"
+            self.spout2pw_sh.chmod(self.spout2pw_sh.stat().st_mode | 0o111)
+            self._log(f"Installed spout2pw to {SPOUT2PW_DIR}")
+            self._log(f"Set VTS launch options to: {self._get_vts_launch_opts()}")
+        except Exception as e:
+            self._log(f"ERROR: {e}")
+        self._update_spout2pw_status()
         self._update_buttons()
 
     def _update_s2p_btn_labels(self):
         if self.spout2pw_sh:
-            self.download_s2p_btn.set_label("Installed")
-            self.download_s2p_btn.set_visible(True)
+            self.install_bundled_btn.set_label("Installed")
+            self.install_bundled_btn.set_visible(True)
             self.install_s2p_btn.set_visible(False)
+        elif self.bundled_spout2pw:
+            self.install_bundled_btn.set_label("Install bundled")
+            self.install_bundled_btn.set_visible(True)
+            self.install_s2p_btn.set_visible(True)
         else:
-            self.download_s2p_btn.set_label("Download")
-            self.download_s2p_btn.set_visible(True)
+            self.install_bundled_btn.set_visible(False)
             self.install_s2p_btn.set_visible(True)
 
     def _extract_spout2pw_tar(self, tar_path):
