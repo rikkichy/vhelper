@@ -17,11 +17,14 @@ install:
 	rm -rf $(APPDIR)/spout2pw-bundle
 	cp -r data/spout2pw $(APPDIR)/spout2pw-bundle
 	chmod 755 $(APPDIR)/spout2pw-bundle/spout2pw.sh
+	rm -rf $(APPDIR)/obs-pwvideo-bundle
+	cp -r data/obs-pwvideo $(APPDIR)/obs-pwvideo-bundle
 
 uninstall:
 	rm -f $(BINDIR)/vhelper
 	rm -f $(APPDIR)/vhelper.py
 	rm -rf $(APPDIR)/spout2pw-bundle
+	rm -rf $(APPDIR)/obs-pwvideo-bundle
 	rmdir --ignore-fail-on-non-empty $(APPDIR)
 	rm -f $(DESKTOPDIR)/com.vhelper.app.desktop
 	rm -f $(ICONDIR)/com.vhelper.app.svg

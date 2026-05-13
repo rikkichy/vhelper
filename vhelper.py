@@ -19,6 +19,7 @@ VTS_COMPAT = STEAM_ROOT / "steamapps/compatdata" / VTS_APPID
 VTS_PREFIX = VTS_COMPAT / "pfx"
 SHOOST_DIR = VTS_PREFIX / "drive_c/Shoost"
 SPOUT2PW_DIR = Path.home() / ".local/share/spout2pw"
+OBS_PWVIDEO_USER_DIR = Path.home() / ".config/obs-studio/plugins/obs-pwvideo"
 CONFIG_FILE = Path.home() / ".config/vhelper.json"
 
 
@@ -85,6 +86,47 @@ def find_bundled_spout2pw():
     return None
 
 
+def find_bundled_obs_pwvideo():
+    """Return the directory containing the vendored obs-pwvideo plugin, or None.
+
+    Layout matches upstream's prebuilt tarball:
+        bin/64bit/obs-pwvideo.so
+        data/locale/en-US.ini
+    """
+    py = Path(__file__).resolve()
+    for cand in (py.parent / "obs-pwvideo-bundle", py.parent / "data/obs-pwvideo"):
+        if (cand / "bin/64bit/obs-pwvideo.so").exists():
+            return cand
+    return None
+
+
+def is_obs_pwvideo_installed():
+    return (OBS_PWVIDEO_USER_DIR / "bin/64bit/obs-pwvideo.so").exists()
+
+
+def check_obs_pwvideo_deps(so_path):
+    """Return a list of unresolved SONAMEs reported by ldd, or [] on success.
+
+    The upstream prebuilt .so links libobs.so.30 — if the user's OBS bumped
+    its major (e.g. OBS 31 ships libobs.so.31), the plugin won't load. We
+    warn before copying so the user isn't left wondering why OBS ignores it."""
+    if not shutil.which("ldd"):
+        return []
+    try:
+        result = subprocess.run(
+            ["ldd", str(so_path)],
+            capture_output=True, text=True, timeout=10,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return []
+    missing = []
+    for line in result.stdout.splitlines():
+        if "not found" in line.lower():
+            soname = line.strip().split()[0]
+            missing.append(soname)
+    return missing
+
+
 def load_config():
     if CONFIG_FILE.exists():
         return json.loads(CONFIG_FILE.read_text())
@@ -100,6 +142,7 @@ class VHelperWindow(Adw.ApplicationWindow):
         self.shoost_exe = find_shoost_exe()
         self.install_prefix = detect_vhelper_install()
         self.bundled_spout2pw = find_bundled_spout2pw()
+        self.bundled_obs_pwvideo = find_bundled_obs_pwvideo()
 
         if not find_spout2pw() and self.bundled_spout2pw:
             try:
@@ -154,6 +197,10 @@ class VHelperWindow(Adw.ApplicationWindow):
         self.spout2pw_row = Adw.ActionRow(title="spout2pw")
         self._update_spout2pw_status()
         status_group.add(self.spout2pw_row)
+
+        self.obs_pwvideo_row = Adw.ActionRow(title="obs-pwvideo")
+        self._update_obs_pwvideo_status()
+        status_group.add(self.obs_pwvideo_row)
 
         inner.append(status_group)
 
@@ -232,6 +279,35 @@ class VHelperWindow(Adw.ApplicationWindow):
 
         inner.append(spout2pw_group)
 
+        obs_group = Adw.PreferencesGroup(
+            title="OBS",
+            description="obs-pwvideo plugin lets OBS read the PipeWire stream",
+        )
+
+        pwv_install_row = Adw.ActionRow(
+            title="Install obs-pwvideo plugin",
+            subtitle=f"Copy bundled plugin to {OBS_PWVIDEO_USER_DIR}",
+        )
+        self.pwv_install_btn = Gtk.Button(label="Install", valign=Gtk.Align.CENTER)
+        self.pwv_install_btn.add_css_class("suggested-action")
+        self.pwv_install_btn.connect("clicked", self.on_install_obs_pwvideo)
+        pwv_install_row.add_suffix(self.pwv_install_btn)
+        pwv_install_row.set_activatable_widget(self.pwv_install_btn)
+        obs_group.add(pwv_install_row)
+
+        pwv_remove_row = Adw.ActionRow(
+            title="Remove obs-pwvideo plugin",
+            subtitle=str(OBS_PWVIDEO_USER_DIR),
+        )
+        self.pwv_remove_btn = Gtk.Button(label="Remove", valign=Gtk.Align.CENTER)
+        self.pwv_remove_btn.add_css_class("destructive-action")
+        self.pwv_remove_btn.connect("clicked", self.on_remove_obs_pwvideo)
+        pwv_remove_row.add_suffix(self.pwv_remove_btn)
+        pwv_remove_row.set_activatable_widget(self.pwv_remove_btn)
+        obs_group.add(pwv_remove_row)
+
+        inner.append(obs_group)
+
         log_group = Adw.PreferencesGroup(title="Log")
         self.log_view = Gtk.TextView(editable=False, monospace=True)
         self.log_view.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
@@ -277,11 +353,21 @@ class VHelperWindow(Adw.ApplicationWindow):
         else:
             self._set_row_status(self.spout2pw_row, "Not installed", False)
 
+    def _update_obs_pwvideo_status(self):
+        if is_obs_pwvideo_installed():
+            self._set_row_status(self.obs_pwvideo_row, str(OBS_PWVIDEO_USER_DIR), True)
+        else:
+            self._set_row_status(self.obs_pwvideo_row, "Not installed", False)
+
     def _update_buttons(self):
         installed = self.shoost_exe is not None
         self.launch_btn.set_sensitive(installed and self.shoost_proc is None)
         self.stop_btn.set_sensitive(self.shoost_proc is not None)
         self.uninstall_btn.set_sensitive(installed and self.shoost_proc is None)
+        pwv_installed = is_obs_pwvideo_installed()
+        self.pwv_install_btn.set_sensitive(self.bundled_obs_pwvideo is not None)
+        self.pwv_install_btn.set_label("Reinstall" if pwv_installed else "Install")
+        self.pwv_remove_btn.set_sensitive(pwv_installed)
         self._refresh_settings_dialog()
 
     def _refresh_settings_dialog(self):
@@ -565,6 +651,64 @@ class VHelperWindow(Adw.ApplicationWindow):
 
         self.spout2pw_sh = find_spout2pw()
         self._update_spout2pw_status()
+        self._update_buttons()
+
+    def on_install_obs_pwvideo(self, _btn):
+        if not self.bundled_obs_pwvideo:
+            self._log("ERROR: No bundled obs-pwvideo available")
+            return
+        so = self.bundled_obs_pwvideo / "bin/64bit/obs-pwvideo.so"
+        missing = check_obs_pwvideo_deps(so)
+        if missing:
+            body = (
+                "The bundled plugin links libraries not present on this system:\n\n"
+                + "\n".join(f"  • {m}" for m in missing)
+                + "\n\nThis usually means your OBS major version differs from "
+                "the prebuilt's. OBS won't load the plugin. Install obs-pwvideo "
+                "from your distro package manager / AUR instead, or build it "
+                "from source.\n\nInstall the bundled plugin anyway?"
+            )
+            dialog = Adw.MessageDialog(
+                transient_for=self,
+                heading="ABI mismatch",
+                body=body,
+            )
+            dialog.add_response("cancel", "Cancel")
+            dialog.add_response("install", "Install Anyway")
+            dialog.set_response_appearance("install", Adw.ResponseAppearance.DESTRUCTIVE)
+            dialog.set_default_response("cancel")
+            dialog.connect("response", self._on_pwv_install_confirm)
+            dialog.present()
+            return
+        self._do_install_obs_pwvideo()
+
+    def _on_pwv_install_confirm(self, _dialog, response):
+        if response == "install":
+            self._do_install_obs_pwvideo()
+
+    def _do_install_obs_pwvideo(self):
+        src = self.bundled_obs_pwvideo
+        try:
+            if OBS_PWVIDEO_USER_DIR.exists():
+                shutil.rmtree(OBS_PWVIDEO_USER_DIR)
+            shutil.copytree(src, OBS_PWVIDEO_USER_DIR)
+            self._log(f"Installed obs-pwvideo to {OBS_PWVIDEO_USER_DIR}")
+            self._log("Restart OBS to pick up the new plugin.")
+        except Exception as e:
+            self._log(f"ERROR: {e}")
+        self._update_obs_pwvideo_status()
+        self._update_buttons()
+
+    def on_remove_obs_pwvideo(self, _btn):
+        if not OBS_PWVIDEO_USER_DIR.exists():
+            self._log("obs-pwvideo not installed")
+            return
+        try:
+            shutil.rmtree(OBS_PWVIDEO_USER_DIR)
+            self._log(f"Removed {OBS_PWVIDEO_USER_DIR}")
+        except Exception as e:
+            self._log(f"ERROR: {e}")
+        self._update_obs_pwvideo_status()
         self._update_buttons()
 
     def _vhelper_install_paths(self):
