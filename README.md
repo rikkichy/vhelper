@@ -27,8 +27,7 @@ Works on Arch, Debian/Ubuntu, Fedora, openSUSE, and Void.
 ## Features
 
 - **Shoost** — Install, launch, and manage Shoost inside VTube Studio's Proton container for proper Spout2 texture sharing
-- **spout2pw** — Download and install spout2pw to bridge Spout2 output to PipeWire for OBS
-- **NTSYNC** — Toggle NT synchronization for better performance (Linux 6.14+)
+- **spout2pw** — Bundled spout2pw bridges Spout2 output to PipeWire for OBS
 
 ## Build
 

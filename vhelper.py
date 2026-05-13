@@ -98,11 +98,6 @@ def load_config():
     return {}
 
 
-def save_config(cfg):
-    CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
-    CONFIG_FILE.write_text(json.dumps(cfg, indent=2))
-
-
 class VHelperWindow(Adw.ApplicationWindow):
     def __init__(self, app):
         super().__init__(application=app, title="VHelper", default_width=520, default_height=580)
@@ -112,8 +107,6 @@ class VHelperWindow(Adw.ApplicationWindow):
         self.shoost_exe = find_shoost_exe()
         self.spout2pw_sh = find_spout2pw()
         self.spout2pw_override_sh = find_spout2pw_override()
-        self.cfg = load_config()
-        self.use_ntsync = self.cfg.get("ntsync", False)
         self.install_prefix = detect_vhelper_install()
         self.bundled_spout2pw = find_bundled_spout2pw()
 
@@ -164,20 +157,6 @@ class VHelperWindow(Adw.ApplicationWindow):
         status_group.add(self.spout2pw_row)
 
         inner.append(status_group)
-
-        options_group = Adw.PreferencesGroup(title="Options")
-
-        ntsync_available = Path("/dev/ntsync").exists()
-        ntsync_row = Adw.SwitchRow(
-            title="NTSYNC",
-            subtitle="/dev/ntsync " + ("available" if ntsync_available else "not found"),
-        )
-        ntsync_row.set_active(self.use_ntsync)
-        ntsync_row.set_sensitive(ntsync_available)
-        ntsync_row.connect("notify::active", self._on_ntsync_toggled)
-        options_group.add(ntsync_row)
-
-        inner.append(options_group)
 
         shoost_group = Adw.PreferencesGroup(title="Shoost")
 
@@ -276,11 +255,6 @@ class VHelperWindow(Adw.ApplicationWindow):
         end = self.log_buf.get_end_iter()
         self.log_view.scroll_to_iter(end, 0, False, 0, 0)
 
-    def _on_ntsync_toggled(self, row, _pspec):
-        self.use_ntsync = row.get_active()
-        self.cfg["ntsync"] = self.use_ntsync
-        save_config(self.cfg)
-
     def _set_row_status(self, row, subtitle, ok):
         row.set_subtitle(subtitle)
         old = getattr(row, "_status_icon", None)
@@ -323,10 +297,9 @@ class VHelperWindow(Adw.ApplicationWindow):
             btn.set_sensitive(self.spout2pw_override_sh is not None)
 
     def _get_vts_launch_opts(self):
-        ntsync = "PROTON_USE_NTSYNC=1 " if self.use_ntsync else ""
         if self.spout2pw_sh:
-            return f"{ntsync}{self.spout2pw_sh} %command%"
-        return f"{ntsync}{SPOUT2PW_DIR}/spout2pw.sh %command%"
+            return f"{self.spout2pw_sh} %command%"
+        return f"{SPOUT2PW_DIR}/spout2pw.sh %command%"
 
     def _show_copy_dialog(self, heading, body, copy_text=None):
         dialog = Adw.MessageDialog(
@@ -421,8 +394,7 @@ class VHelperWindow(Adw.ApplicationWindow):
         if not self.shoost_exe:
             self._log("Shoost not installed")
             return
-        ntsync = "PROTON_USE_NTSYNC=1 " if self.use_ntsync else ""
-        cmd = f"{ntsync}protontricks-launch --appid {VTS_APPID} '{self.shoost_exe}'"
+        cmd = f"protontricks-launch --appid {VTS_APPID} '{self.shoost_exe}'"
         self._show_copy_dialog("Terminal Command", cmd)
 
     def on_launch_shoost(self, _btn):
@@ -436,16 +408,11 @@ class VHelperWindow(Adw.ApplicationWindow):
             str(self.shoost_exe),
         ]
 
-        env = os.environ.copy()
-        if self.use_ntsync:
-            env["PROTON_USE_NTSYNC"] = "1"
-            self._log("NTSYNC enabled")
         self._log(f"Launching {self.shoost_exe.name} via protontricks-launch")
 
         try:
             self.shoost_proc = subprocess.Popen(
                 cmd,
-                env=env,
                 cwd=str(SHOOST_DIR),
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
