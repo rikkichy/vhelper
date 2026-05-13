@@ -118,6 +118,10 @@ class VHelperWindow(Adw.ApplicationWindow):
         self.bundled_spout2pw = find_bundled_spout2pw()
 
         header = Adw.HeaderBar()
+        settings_btn = Gtk.Button(icon_name="emblem-system-symbolic")
+        settings_btn.set_tooltip_text("Settings")
+        settings_btn.connect("clicked", self.on_open_settings)
+        header.pack_end(settings_btn)
 
         content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         content.append(header)
@@ -232,16 +236,6 @@ class VHelperWindow(Adw.ApplicationWindow):
             description="Bridge Spout2 output to PipeWire for OBS",
         )
 
-        install_s2p_row = Adw.ActionRow(
-            title="Override spout2pw",
-            subtitle="Replace the bundled version with a local tarball",
-        )
-        self.install_s2p_btn = Gtk.Button(label="Install from file", valign=Gtk.Align.CENTER)
-        self.install_s2p_btn.connect("clicked", self.on_install_spout2pw)
-        install_s2p_row.add_suffix(self.install_s2p_btn)
-        install_s2p_row.set_activatable_widget(self.install_s2p_btn)
-        spout2pw_group.add(install_s2p_row)
-
         vts_opts_row = Adw.ActionRow(
             title="VTube Studio Launch Options",
             subtitle="Set in Steam > VTube Studio > Properties > Launch Options",
@@ -258,35 +252,7 @@ class VHelperWindow(Adw.ApplicationWindow):
         vts_opts_row.add_suffix(copy_opts_btn)
         spout2pw_group.add(vts_opts_row)
 
-        uninstall_s2p_row = Adw.ActionRow(
-            title="Remove override",
-            subtitle=f"Delete {SPOUT2PW_DIR} and fall back to the bundle",
-        )
-        self.uninstall_s2p_btn = Gtk.Button(label="Remove", valign=Gtk.Align.CENTER)
-        self.uninstall_s2p_btn.add_css_class("destructive-action")
-        self.uninstall_s2p_btn.connect("clicked", self.on_uninstall_spout2pw)
-        uninstall_s2p_row.add_suffix(self.uninstall_s2p_btn)
-        uninstall_s2p_row.set_activatable_widget(self.uninstall_s2p_btn)
-        spout2pw_group.add(uninstall_s2p_row)
-
         inner.append(spout2pw_group)
-
-        if self.install_prefix:
-            vh_group = Adw.PreferencesGroup(
-                title="vhelper",
-                description=f"Installed at {self.install_prefix}",
-            )
-            uninstall_vh_row = Adw.ActionRow(
-                title="Uninstall vhelper",
-                subtitle="Removes the app. Shoost and spout2pw stay installed.",
-            )
-            self.uninstall_vh_btn = Gtk.Button(label="Uninstall", valign=Gtk.Align.CENTER)
-            self.uninstall_vh_btn.add_css_class("destructive-action")
-            self.uninstall_vh_btn.connect("clicked", self.on_uninstall_vhelper)
-            uninstall_vh_row.add_suffix(self.uninstall_vh_btn)
-            uninstall_vh_row.set_activatable_widget(self.uninstall_vh_btn)
-            vh_group.add(uninstall_vh_row)
-            inner.append(vh_group)
 
         log_group = Adw.PreferencesGroup(title="Log")
         self.log_view = Gtk.TextView(editable=False, monospace=True)
@@ -303,7 +269,6 @@ class VHelperWindow(Adw.ApplicationWindow):
 
         self.set_content(content)
         self._update_buttons()
-        self._update_s2p_btn_labels()
 
     def _log(self, msg):
         end = self.log_buf.get_end_iter()
@@ -341,16 +306,21 @@ class VHelperWindow(Adw.ApplicationWindow):
             self._set_row_status(self.spout2pw_row, label, True)
         else:
             self._set_row_status(self.spout2pw_row, "Not installed", False)
-        if hasattr(self, "install_s2p_btn"):
-            self._update_s2p_btn_labels()
 
     def _update_buttons(self):
         installed = self.shoost_exe is not None
         self.launch_btn.set_sensitive(installed and self.shoost_proc is None)
         self.stop_btn.set_sensitive(self.shoost_proc is not None)
         self.uninstall_btn.set_sensitive(installed and self.shoost_proc is None)
-        self.install_s2p_btn.set_sensitive(self.spout2pw_override_sh is None)
-        self.uninstall_s2p_btn.set_sensitive(self.spout2pw_override_sh is not None)
+        self._refresh_settings_dialog()
+
+    def _refresh_settings_dialog(self):
+        btn = getattr(self, "_settings_override_btn", None)
+        if btn:
+            btn.set_sensitive(self.spout2pw_override_sh is None)
+        btn = getattr(self, "_settings_remove_btn", None)
+        if btn:
+            btn.set_sensitive(self.spout2pw_override_sh is not None)
 
     def _get_vts_launch_opts(self):
         ntsync = "PROTON_USE_NTSYNC=1 " if self.use_ntsync else ""
@@ -536,11 +506,6 @@ class VHelperWindow(Adw.ApplicationWindow):
         self._update_shoost_status()
         self._update_buttons()
 
-    def _update_s2p_btn_labels(self):
-        self.install_s2p_btn.set_label(
-            "Override active" if self.spout2pw_override_sh else "Install from file"
-        )
-
     def _extract_spout2pw_tar(self, tar_path):
         try:
             with tarfile.open(tar_path, "r:gz") as tf:
@@ -674,6 +639,65 @@ class VHelperWindow(Adw.ApplicationWindow):
         dialog.set_default_response("cancel")
         dialog.connect("response", self._on_uninstall_vhelper_response, existing)
         dialog.present()
+
+    def on_open_settings(self, _btn):
+        dialog = Adw.PreferencesDialog()
+        dialog.set_title("Settings")
+        page = Adw.PreferencesPage()
+        dialog.add(page)
+
+        s2p_group = Adw.PreferencesGroup(
+            title="spout2pw override",
+            description="The bundled spout2pw is used by default. An override replaces it from a local tarball.",
+        )
+
+        override_row = Adw.ActionRow(
+            title="Install override from file",
+            subtitle=f"Extract a tarball to {SPOUT2PW_DIR}",
+        )
+        self._settings_override_btn = Gtk.Button(label="Install from file", valign=Gtk.Align.CENTER)
+        self._settings_override_btn.connect("clicked", self.on_install_spout2pw)
+        override_row.add_suffix(self._settings_override_btn)
+        override_row.set_activatable_widget(self._settings_override_btn)
+        s2p_group.add(override_row)
+
+        remove_row = Adw.ActionRow(
+            title="Remove override",
+            subtitle="Fall back to the bundled spout2pw",
+        )
+        self._settings_remove_btn = Gtk.Button(label="Remove", valign=Gtk.Align.CENTER)
+        self._settings_remove_btn.add_css_class("destructive-action")
+        self._settings_remove_btn.connect("clicked", self.on_uninstall_spout2pw)
+        remove_row.add_suffix(self._settings_remove_btn)
+        remove_row.set_activatable_widget(self._settings_remove_btn)
+        s2p_group.add(remove_row)
+
+        page.add(s2p_group)
+
+        if self.install_prefix:
+            vh_group = Adw.PreferencesGroup(
+                title="vhelper",
+                description=f"Installed at {self.install_prefix}",
+            )
+            uninstall_vh_row = Adw.ActionRow(
+                title="Uninstall vhelper",
+                subtitle="Removes the app. Shoost and spout2pw stay installed.",
+            )
+            un_btn = Gtk.Button(label="Uninstall", valign=Gtk.Align.CENTER)
+            un_btn.add_css_class("destructive-action")
+            un_btn.connect("clicked", self.on_uninstall_vhelper)
+            uninstall_vh_row.add_suffix(un_btn)
+            uninstall_vh_row.set_activatable_widget(un_btn)
+            vh_group.add(uninstall_vh_row)
+            page.add(vh_group)
+
+        dialog.connect("closed", self._on_settings_closed)
+        self._refresh_settings_dialog()
+        dialog.present(self)
+
+    def _on_settings_closed(self, _dialog):
+        self._settings_override_btn = None
+        self._settings_remove_btn = None
 
     def _on_uninstall_vhelper_response(self, _dialog, response, existing):
         if response != "uninstall":
