@@ -779,8 +779,15 @@ class VHelperWindow(Adw.ApplicationWindow):
             p / "share/icons/hicolor/scalable/apps/com.vhelper.app.svg",
         ]
 
+    def _user_data_paths(self):
+        """User-owned bundle copies vhelper drops outside the install prefix.
+        Always user-writable, so removal never needs pkexec."""
+        return [SPOUT2PW_DIR, OBS_PWVIDEO_USER_DIR]
+
     def on_uninstall_vhelper(self, _btn):
-        existing = [p for p in self._vhelper_install_paths() if p.exists()]
+        system_existing = [p for p in self._vhelper_install_paths() if p.exists()]
+        user_existing = [p for p in self._user_data_paths() if p.exists()]
+        existing = system_existing + user_existing
         if not existing:
             self._log("Nothing to uninstall")
             return
@@ -790,14 +797,19 @@ class VHelperWindow(Adw.ApplicationWindow):
             heading="Uninstall vhelper?",
             body=(
                 f"This will remove:\n\n{files_list}\n\n"
-                "Shoost and spout2pw installations are not affected."
+                "Shoost is not affected."
             ),
         )
         dialog.add_response("cancel", "Cancel")
         dialog.add_response("uninstall", "Uninstall")
         dialog.set_response_appearance("uninstall", Adw.ResponseAppearance.DESTRUCTIVE)
         dialog.set_default_response("cancel")
-        dialog.connect("response", self._on_uninstall_vhelper_response, existing)
+        dialog.connect(
+            "response",
+            self._on_uninstall_vhelper_response,
+            system_existing,
+            user_existing,
+        )
         dialog.present()
 
     def on_open_settings(self, _btn):
@@ -845,7 +857,7 @@ class VHelperWindow(Adw.ApplicationWindow):
             )
             uninstall_vh_row = Adw.ActionRow(
                 title="Uninstall vhelper",
-                subtitle="Removes the app. Shoost and spout2pw stay installed.",
+                subtitle="Removes the app, spout2pw, and obs-pwvideo plugin. Shoost stays.",
             )
             un_btn = Gtk.Button(label="Uninstall", valign=Gtk.Align.CENTER)
             un_btn.add_css_class("destructive-action")
@@ -862,11 +874,11 @@ class VHelperWindow(Adw.ApplicationWindow):
     def _on_settings_closed(self, _dialog):
         self._settings_reset_btn = None
 
-    def _on_uninstall_vhelper_response(self, _dialog, response, existing):
+    def _on_uninstall_vhelper_response(self, _dialog, response, system_existing, user_existing):
         if response != "uninstall":
             return
 
-        needs_root = not os.access(self.install_prefix, os.W_OK)
+        needs_root = system_existing and not os.access(self.install_prefix, os.W_OK)
         self._log("Uninstalling vhelper...")
 
         try:
@@ -875,18 +887,23 @@ class VHelperWindow(Adw.ApplicationWindow):
                     self._log("ERROR: pkexec not available; cannot remove root-owned files")
                     return
                 result = subprocess.run(
-                    ["pkexec", "rm", "-rf", *[str(p) for p in existing]],
+                    ["pkexec", "rm", "-rf", *[str(p) for p in system_existing]],
                     capture_output=True, text=True,
                 )
                 if result.returncode != 0:
                     self._log(f"ERROR: {(result.stderr or result.stdout).strip()}")
                     return
             else:
-                for p in existing:
+                for p in system_existing:
                     if p.is_dir():
                         shutil.rmtree(p)
                     else:
                         p.unlink()
+            for p in user_existing:
+                if p.is_dir():
+                    shutil.rmtree(p)
+                else:
+                    p.unlink()
             self._log("Removed. Quitting...")
             GLib.timeout_add(800, lambda: (self.get_application().quit(), False)[1])
         except Exception as e:
